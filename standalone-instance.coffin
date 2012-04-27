@@ -1,0 +1,63 @@
+#
+# Name::        standalone-instance.coffin
+# Description:: Simple Coffin template to create a Clodformation Stack with: 
+#                 * Standalone EC2 instance
+#                 * Route53 entry
+#               Also creates some Parameters to support chef/cloud-init/cloud-config integration.
+#
+# Copyright 2012, Aaron Bento
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+@Description 'Single EC2 Instance + R53 DNS entry.'
+
+# Bury away the size, type, ami to another file.
+path = require 'path'
+sizeAmiMap = require "#{path.resolve('.')}/amiMapping"
+@Mapping 'sizeAmiMap', sizeAmiMap
+
+# Some Parameters used by Chef.
+@Param.String 'chefServerUrl'
+@Param.String 'chefValidationPem'
+@Param.String 'environment'
+@Param.String 'instanceSuffix',
+@Param.String 'runList'
+
+# Standard Parameters
+@Param.String 'r53ZoneId',
+@Param.String 'r53ZoneName',
+@Param.String 'keyName',
+@Param.String 'stackName',          AllowedPattern: '[a-zA-Z][-a-zA-Z0-9]*'
+@Param.String 'securityGroup',
+@Param.String 'ami',                AllowedValues: key for key, value of sizeAmiMap
+
+fqdn = @Join '.', @Params.name, @Params.environment, @Params.r53ZoneName
+
+# Let's create some Resources!
+@AWS.EC2.Instance "ec2instance",
+  ImageId:         @FindInMap 'sizeAmiMap', @Params.size, 'AMI'
+  InstanceType:    @FindInMap 'sizeAmiMap', @Params.size, 'InstanceType'
+  SecurityGroups:  [ @Params.securityGroup ]
+  KeyName:         @Params.keyName
+  Tags:            [ @Tag 'Name', fqdn ]
+  UserData:        @InitScript "#{path.resolve('.')}/cloud-init.sh"
+
+@AWS.Route53.RecordSet "ec2instanceDns",
+  HostedZoneId:    @Params.r53ZoneId
+  Name:            fqdn
+  Type:            'CNAME'
+  TTL:             '60'
+  ResourceRecords: [ @GetAtt "ec2instance", 'PublicDnsName' ]
+
+@Output "ec2instancednsname", "ec2instanceDns"
